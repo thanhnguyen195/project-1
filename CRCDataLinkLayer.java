@@ -7,7 +7,7 @@
  * @date 2008 March 03
  * @version %I% %G%
  **/
-public class ParityDataLinkLayer extends DataLinkLayer {
+public class CRCDataLinkLayer extends DataLinkLayer {
 // =============================================================================
 
 
@@ -19,7 +19,7 @@ public class ParityDataLinkLayer extends DataLinkLayer {
      * @param physicalLayer The physical layer through which this data link
      * layer should communicate.
      **/
-    public ParityDataLinkLayer (PhysicalLayer physicalLayer) {
+    public CRCDataLinkLayer (PhysicalLayer physicalLayer) {
 
 	// Initialize the layer.
 	initialize(physicalLayer);
@@ -74,7 +74,7 @@ public class ParityDataLinkLayer extends DataLinkLayer {
 
 	// Allocate an array of bytes large enough to hold the largest possible
 	// frame (tags and parity byte included).
-	byte[] framedData = new byte[(_maxFrameSize * 2) + 3];
+	byte[] framedData = new byte[(_maxFrameSize * 4) + 3];
 
 	// Begin with the start tag.
 	int frameIndex = 0;
@@ -99,10 +99,13 @@ public class ParityDataLinkLayer extends DataLinkLayer {
 
 	}
 
-	// Calculate the parity bit (which is placed in its own byte).
-	framedData[frameIndex++] = calculateParity(data, begin, end);
+	// Create the finalFrame, base on the frame data we just created and the CRC
+    byte[] finalFrame = new byte[(_maxFrameSize * 4) + 3];
+	finalFrame = calculateCRC(framedData, 0, frameIndex);
+    //System.out.println("This is the CRCDDL");
 
 	// End with a stop tag.
+    /*
 	framedData[frameIndex++] = _stopTag;
 
 	// Copy the complete frame into a buffer of the exact desired
@@ -114,7 +117,7 @@ public class ParityDataLinkLayer extends DataLinkLayer {
 	}
     
         //System.out.println();
-
+    */
 	return finalFrame;
 
     } // constructFrame (byte[] data, int begin, int end)
@@ -131,21 +134,100 @@ public class ParityDataLinkLayer extends DataLinkLayer {
      * @param end The ending index of the bytes to examine.
      * @return The parity (0 or 1) for this group of bytes.
      **/
-    private byte calculateParity (byte[] data, int begin, int end) {
+    
+    //calculate the transmit frame by get the remainder than subtract it from the original bits
+    private BitVector PolyDiv(BitVector one, BitVector two){
+        int oneIndex = 0;
+        BitVector carry = new BitVector();
+        for (int i=0;i<two.length();i++){
+            carry.setBit(i,one.getBit(i));
+        }
+        //printBit(carry);
+        while (oneIndex+two.length()<=one.length()){
+            carry.setBit(two.length()-1,one.getBit(oneIndex+two.length()-1));
+            //printBit(carry);
+            boolean token = carry.getBit(0);
+            for (int i=1;i<two.length();i++){
+                if (token==true)
+                    carry.setBit(i-1,carry.getBit(i)^two.getBit(i));
+                else
+                    carry.setBit(i-1,carry.getBit(i)^false);
+            }
+            oneIndex++;
+        }
+        //printBit(carry);
+        for (int i=0;i<carry.length()-1;i++){
+            one.setBit(one.length()-i-1,one.getBit(one.length()-i-1)^carry.getBit(carry.length()-i-2));
+        }
+        return one;
+    }
+    
+    //create the Generator bits
+    private BitVector createG(){
+        BitVector gfactor = new BitVector();
+        gfactor.setBit(0,true);
+        gfactor.setBit(16,true); // 15 is the maxlength of burst error in the burstyNoiseMedium
+        return gfactor;
+    }
+    
+    private BitVector createBit(String str){
+        BitVector bits = new BitVector();
+        for (int i=0;i<str.length();i++){
+            if (str.charAt(i)=='1')
+                bits.setBit(i,true);
+            else
+                bits.setBit(i,false);
+        }
+        return bits;
+    }
 
+
+    private void printBit(BitVector bits){
+        int one;
+        for (int i = 0; i < bits.length(); i++) {
+            one = (bits.getBit(i) ? 1 : 0);
+            System.out.print(one);
+        }
+        System.out.println();
+    }
+
+    
+    private byte[] calculateCRC (byte[] data, int begin, int end) {
 	// Create a bit vector from the bytes specified.
 	BitVector bits = new BitVector(data, begin, end);
+    byte[] finalFrame = new byte[(_maxFrameSize * 4) + 3];
 
 	// Iterate over the bit vector, counting the bits whose value is 1.
 	int ones = 0;
-	for (int i = 0; i < bits.length(); i++) {
-
-	    ones += (bits.getBit(i) ? 1 : 0);
-
+    BitVector gfactor = createG();
+    int leng = bits.length();
+    for (int i=0;i<gfactor.length()-1;i++){
+        bits.setBit(leng+i,false);
+    } //append gfactor level of 0 to bits
+    
+    BitVector finalBits = PolyDiv(bits,gfactor);
+    byte[] stop = new byte[1];
+    stop[0] = _stopTag;
+    BitVector stopTagBit = new BitVector(stop,0,1);
+    //printBit(stopTagBit);
+    int lengfinal = finalBits.length();
+    //System.out.print("s bits ");
+    //printBit(finalBits);
+    for (int i=0;i<stopTagBit.length();i++){
+        finalBits.setBit(lengfinal+i,stopTagBit.getBit(i));
+    }
+    finalFrame = finalBits.toByteArray();
+    //printBit(finalBits);
+    /*
+    int frameIndex=0;
+    while (finalFrame[frameIndex]!=_stopTag||finalFrame[frameIndex-1]==_escapeTag) {
+        System.out.print(finalFrame[frameIndex]);
+        frameIndex++;
 	}
-
-	// Return the parity.
-	return (byte)(ones % 2);
+    System.out.println();
+	*/
+    // Return the the whole frame which contain both the data and the CRC.
+	return finalFrame;
 
     } // calculateParity (byte[] data, int begin, int end)
     // =========================================================================
@@ -187,7 +269,7 @@ public class ParityDataLinkLayer extends DataLinkLayer {
 
 	// Allocate sufficient space to hold the original data, which
 	// does not need space for the start/stop tags.
-	byte[] originalData = new byte[bufferIndex - 3];
+	byte[] originalData = new byte[bufferIndex];
 
 	// Check the start tag.
 	int frameIndex = 0;
@@ -197,37 +279,60 @@ public class ParityDataLinkLayer extends DataLinkLayer {
 	    return null;
 
 	}
-
+    //System.out.println(frameIndex);
 	// Loop through the frame, extracting the bytes.  Look ahead to find the
 	// stop tag (making sure it is not escaped), because the byte before
 	// that is the parity byte.
 	int originalIndex = 0;
-	while ((incomingBuffer[frameIndex + 1] != _stopTag) ||
-	       (incomingBuffer[frameIndex] == _escapeTag)) {
-
-	    // If the next original byte is escape-tagged, then skip
-	    // the tag so that only the real data is extracted.
-	    if (incomingBuffer[frameIndex] == _escapeTag) {
-
-		frameIndex++;
-
-	    }
-
+    frameIndex = 0;
+	while ((incomingBuffer[frameIndex] != _stopTag) ||
+	       (incomingBuffer[frameIndex-1] == _escapeTag)) {
+        //System.out.println(frameIndex);
 	    // Copy the original byte.
-	    originalData[originalIndex++] = incomingBuffer[frameIndex++];
-
+	    originalData[originalIndex] = incomingBuffer[frameIndex];
+        originalIndex++;
+        frameIndex++;
 	}
 
 	// Allocate a space that is only as large as the original
 	// message and then copy the original data into it.
-	byte[] finalData = new byte[originalIndex];
-	for (int i = 0; i < originalIndex; i++) {
-	    finalData[i] = originalData[i];
-	}
+    
+    BitVector gfactor = createG();
+    BitVector frameBits = new BitVector(originalData,0,originalIndex);
+    BitVector divResult = new BitVector();
+    for (int i=0;i<frameBits.length();i++){
+            divResult.setBit(i,frameBits.getBit(i));
+    }
+    divResult = PolyDiv(divResult,gfactor);
+    Boolean check = false;
+    for (int i=0;i<frameBits.length();i++){
+        if (frameBits.getBit(i)^divResult.getBit(i)==true){
+            check = true;
+            System.out.println("CRC checked error found");
+            return null;
+        }
+    }
+    System.out.println("No error");
 
+
+    byte[] finalData = new byte[originalIndex-2];
+    int finalIndex = 0;
+    for (int i = 0; i < originalIndex-3; i++) {
+        if (originalData[i+1]!=_escapeTag){
+            finalData[finalIndex] = originalData[i+1];
+            finalIndex++;
+        }
+    }
+    
+    byte[] finalfinalData = new byte[finalIndex];
+    for (int i = 0; i < finalIndex; i++) {
+        finalfinalData[i]=finalData[i];
+    }
+    
 	// Calculate the parity of the extracted data and compare it to the
 	// received parity bit.  If there's a mismatch, return null.
-	byte parity = calculateParity(originalData, 0, originalIndex);
+	/*
+    byte parity = calculateCRC(originalData, 0, originalIndex);
 	if (parity != incomingBuffer[frameIndex]) {
 
 	    System.err.print("ParityDLL message: ");
@@ -238,8 +343,8 @@ public class ParityDataLinkLayer extends DataLinkLayer {
 	    finalData = null;
 
 	}
-
-	return finalData;
+*/
+	return finalfinalData;
 
     } // processFrame
     // =========================================================================

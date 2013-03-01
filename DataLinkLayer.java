@@ -82,9 +82,9 @@ abstract class DataLinkLayer {
 	// If this byte completes a frame, then process the frame,
 	// obtaining the original data (stripped of metadata).
 	byte[] originalData = null;
-	if (receivedCompleteFrame()) {
+	if (receivedCompleteFrame()) { //if the byte that just came complete a frame
 
-	    originalData = processFrame();
+	    originalData = processFrame(); // restore the original data from this frame
 	    bufferIndex = 0;
 
 	}
