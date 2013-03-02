@@ -7,27 +7,18 @@
  * @date 2008 March 03
  * @version %I% %G%
  **/
-public class ParityDataLinkLayer extends DataLinkLayer {
+public class HammingDataLinkLayer extends DataLinkLayer {
 // =============================================================================
 
 
 
-    // =========================================================================
-    /**
-     * The constructor.  Make a new parity-checking data link layer.
-     *
-     * @param physicalLayer The physical layer through which this data link
-     * layer should communicate.
-     **/
-    public ParityDataLinkLayer (PhysicalLayer physicalLayer) {
+
+    public HammingDataLinkLayer (PhysicalLayer physicalLayer) {
 
 	// Initialize the layer.
 	initialize(physicalLayer);
 
-    } // ParityDataLinkLayer
-    // =========================================================================
-
-
+    } // HammingDataLinkLayer
 
     // =========================================================================
     /**
@@ -56,10 +47,8 @@ public class ParityDataLinkLayer extends DataLinkLayer {
 	}
 
     } // send (byte[] data)
-    // =========================================================================
-
-
-
+   
+   
     // =========================================================================
     /**
      * Create a single frame to be transmitted.
@@ -79,6 +68,7 @@ public class ParityDataLinkLayer extends DataLinkLayer {
 	// Begin with the start tag.
 	int frameIndex = 0;
 	framedData[frameIndex++] = _startTag;
+
 	// Add each byte of original data.
 	for (int dataIndex = begin; dataIndex < end; dataIndex++) {
 
@@ -99,8 +89,11 @@ public class ParityDataLinkLayer extends DataLinkLayer {
 	}
 
 	// Calculate the parity bit (which is placed in its own byte).
-	framedData[frameIndex++] = calculateParity(data, begin, end);
-
+	framedData[frameIndex++] = calculateHammingCode(data, begin, end);
+    
+    //BitVector bits = new BitVector(data,begin,end);
+    //System.out.print("sbits ");
+    //printBit(bits);
 	// End with a stop tag.
 	framedData[frameIndex++] = _stopTag;
 
@@ -120,6 +113,28 @@ public class ParityDataLinkLayer extends DataLinkLayer {
     // =========================================================================
 
 
+    private BitVector createBit(String str){
+        BitVector bits = new BitVector();
+        for (int i=0;i<str.length();i++){
+            if (str.charAt(i)=='1')
+                bits.setBit(i,true);
+            else
+                bits.setBit(i,false);
+        }
+        return bits;
+    }
+
+
+    private void printBit(BitVector bits){
+        int one;
+        for (int i = 0; i < bits.length(); i++) {
+            one = (bits.getBit(i) ? 1 : 0);
+            System.out.print(one);
+        }
+        System.out.println();
+    }
+
+
 
     // =========================================================================
     /**
@@ -130,21 +145,46 @@ public class ParityDataLinkLayer extends DataLinkLayer {
      * @param end The ending index of the bytes to examine.
      * @return The parity (0 or 1) for this group of bytes.
      **/
-    private byte calculateParity (byte[] data, int begin, int end) {
+    private byte calculateHammingCode (byte[] data, int begin, int end) {
 
 	// Create a bit vector from the bytes specified.
 	BitVector bits = new BitVector(data, begin, end);
-
-	// Iterate over the bit vector, counting the bits whose value is 1.
-	int ones = 0;
+    //BitVector bits = createBit("11011001");
+    //BitVector checkBit = new BitVector();
+    BitVector checkBit = createBit("00000000");
+    
+	// Iterate over the bit vector, updating the check bit base on each data bit
+	int pos = 2;
 	for (int i = 0; i < bits.length(); i++) {
-
-	    ones += (bits.getBit(i) ? 1 : 0);
-
+        pos++;
+        int check = 0;
+        while ((int)Math.pow(2,check)<pos){
+            check++;
+        }
+        if (pos==(int)Math.pow(2,check))
+            pos++; // if this position is a power of 2 then move one position forward because this is the position of the check bit
+        
+        // deconstruct the pos into sum of power of 2
+        int token = pos;
+        while (token>0){
+            int pow = 0;
+            while ((int)Math.pow(2,pow)<=token)
+                pow++;
+            if (pow > 0)
+                pow--;
+            if (bits.getBit(i)){
+                checkBit.setBit(pow,!checkBit.getBit(pow));
+                //printBit(checkBit);
+            }
+            token = token - (int)Math.pow(2,pow);
+        }
 	}
-
+    //System.out.println(pos);
+    //printBit(checkBit);
 	// Return the parity.
-	return (byte)(ones % 2);
+    byte[] result = new byte[1];
+    result = checkBit.toByteArray();
+	return result[0];
 
     } // calculateParity (byte[] data, int begin, int end)
     // =========================================================================
@@ -217,25 +257,69 @@ public class ParityDataLinkLayer extends DataLinkLayer {
 
 	}
 
-	// Allocate a space that is only as large as the original
+
+
+	// Calculate the parity of the extracted data and compare it to the
+	// received parity bit.  If there's a mismatch, return null.
+	byte hamming = calculateHammingCode(originalData, 0, originalIndex);
+	if (hamming != incomingBuffer[frameIndex]) {
+        BitVector bits = new BitVector(originalData, 0, originalIndex);
+        //System.out.print("ebits ");
+        //printBit(bits);
+        byte[] token = new byte[2];
+        token[0] = hamming;
+        token[1] = incomingBuffer[frameIndex];
+        BitVector checkBitCal = new BitVector(token,0,1);
+        BitVector checkBitRe = new BitVector(token,1,2);
+        
+        //Restore the original data from the data receive, the checkbit receive and the checkbit calculated
+        int sum = 0;
+        for (int i=0;i<checkBitCal.length();i++){
+            if (checkBitCal.getBit(i)^checkBitRe.getBit(i))
+                sum = sum + (int)Math.pow(2,i);
+        }
+        
+        if (sum>2){
+            int pos = 2;
+            for (int i = 0; i < bits.length(); i++) {
+                pos++;
+                if (pos==sum){
+                    bits.setBit(i,!bits.getBit(i));
+                    break;
+                }
+                int check = 0;
+                while ((int)Math.pow(2,check)<pos){
+                    check++;
+                }
+                if (pos==(int)Math.pow(2,check)){
+                    pos++; // if this position is a power of 2 then move one position forward because this is the position of the check bit
+                    if (pos==sum){
+                        bits.setBit(i,!bits.getBit(i));
+                        break;
+                    }
+                }
+             }
+        }
+        //System.out.print("rbits ");
+        //printBit(bits);
+        originalData = bits.toByteArray();
+	    System.err.print("HammingCodeDLL message recover: ");
+	    
+        
+        
+        /*
+        for (int i = 0; i < finalData.length; i++) {
+		System.err.print((char)finalData[i]);
+	    }
+	    finalData = null;
+        */
+	}
+    
+    // Allocate a space that is only as large as the original
 	// message and then copy the original data into it.
 	byte[] finalData = new byte[originalIndex];
 	for (int i = 0; i < originalIndex; i++) {
 	    finalData[i] = originalData[i];
-	}
-
-	// Calculate the parity of the extracted data and compare it to the
-	// received parity bit.  If there's a mismatch, return null.
-	byte parity = calculateParity(originalData, 0, originalIndex);
-	if (parity != incomingBuffer[frameIndex]) {
-
-	    System.err.print("ParityDLL message: ");
-	    for (int i = 0; i < finalData.length; i++) {
-		System.err.print((char)finalData[i]);
-	    }
-	    System.err.println(" <= Parity mismatch!");
-	    finalData = null;
-
 	}
 
 	return finalData;
